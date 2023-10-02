@@ -2,18 +2,16 @@
 Monoflux
  </p>
 <p align="center">
-Stream processing for JS simplified
+Stream processing for JS, simplified
  </p>
 
 
 ```javascript
-const response = await fetch(/* ... */)
-const carLogs = Flux.fromReadableStream(response.body)
-    .filter(e => e.topic === 'cars')
-    .map(e => e.text)
-for await (const message of carLogs) {
-    // do stuff with message
+const {body} = await fetch(/* ... */)
+for await (const message of Flux.fromReadableStream(body)) {
+    console.log(message) // happens asynchronously!
 }
+// and Flux can do much, much more...
 ```
 
 
