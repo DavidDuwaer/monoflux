@@ -9,7 +9,7 @@ Stream processing for JS, simplified
 ```javascript
 const {body} = await fetch(/* ... */)
 for await (const message of Flux.fromReadableStream(body)) {
-    // do stuff with message
+    // do stuff with messages as they come in asynchronously
 }
 // and Flux can do much, much more...
 ```
