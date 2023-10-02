@@ -7,8 +7,8 @@ Stream processing for JS, simplified
 
 
 ```javascript
-const response = await fetch(/* ... */)
-const carLogs = Flux.fromReadableStream(response.body)
+const {body} = await fetch(/* ... */)
+const carLogs = Flux.fromReadableStream(body)
     .filter(e => e.topic === 'cars')
     .map(e => e.text)
 for await (const message of carLogs) {
