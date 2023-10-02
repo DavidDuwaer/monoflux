@@ -2,7 +2,7 @@
 Monoflux
  </p>
 <p align="center">
-Stream processing for JS simplified
+Stream processing for JS, simplified
  </p>
 
 
