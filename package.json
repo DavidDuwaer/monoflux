@@ -1,18 +1,14 @@
 {
   "name": "monoflux",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Stream processing for JS simplified",
   "keywords": [
-    "time",
-    "date",
-    "datetime",
-    "typescript",
-    "javascript",
-    "java.time",
-    "timezone",
-    "zoneid",
-    "time zone",
-    "duration"
+    "stream",
+    "flux",
+    "mono",
+    "generator",
+    "rxjs",
+    "reactor"
   ],
   "author": "David Duwaer",
   "license": "MIT",
