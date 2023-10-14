@@ -2,7 +2,7 @@
 Monoflux
  </p>
 <p align="center">
-Stream processing library for JS. AI so simple, it makes asyncronous streams handle like arrays.
+Stream processing library for JS. API so simple, it makes asyncronous streams handle like arrays.
  </p>
 
 
