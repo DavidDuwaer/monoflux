@@ -11,7 +11,6 @@ const flux = ... // a Flux<string>, monoflux's object for an asyncronous stream
 for await (const message of flux) {
     console.log(message) // happens asynchronously!
 }
-// and Flux can do much, much more...
 ```
 
 
