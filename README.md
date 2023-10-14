@@ -71,11 +71,7 @@ const flux = Flux.fromReadableStream(body) // a Flux<Uint8Array>, monoflux's obj
 for await (const message of flux) {
     console.log(message) // happens asynchronously!
 }
-// and Flux can do much, much more...
 ```
-
-
-
 
 # Feedback
 
