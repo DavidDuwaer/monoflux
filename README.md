@@ -37,6 +37,19 @@ for await (const message of chatMessages) {
 // and Flux can do much, much more...
 ```
 
+For collecting all events in an array, you can just tream the flux like a promise, i.e.
+```typescript
+const fluxOfStrings // = a Flux<string>
+const arrayOfStrings = await fluxOfStrings // becomes a string[]
+```
+
+or
+
+```typescript
+fluxOfStrings // = a Flux<string>
+  .then(arrayOfStrings => /* do stuff */)
+```
+
 Consuming a streaming http response
 ```typescript
 const reader = new TextDecoder()
