@@ -21,6 +21,18 @@ npm install monoflux
 ```
 
 # Usage examples
+Creating a Flux
+```typescript
+const flux1 = Flux.fromGeneratorFunction(async function*() {
+  yield 1
+  yield 2
+})
+```
+or
+```typescript
+const flux1 = Flux.fromReadableStream(/* a ReadableStream */)
+```
+
 Transforming a Flux
 ```typescript
 chatMessages // a Flux<Message>
