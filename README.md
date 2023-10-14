@@ -8,7 +8,8 @@ Stream processing for JS that makes streams literally easy as arrays.
 
 ```javascript
 const {body} = await fetch(/* ... */)
-for await (const message of Flux.fromReadableStream(body)) {
+const flux = Flux.fromReadableStream(body) // a Flux, monoflux's object for an asyncronous stream
+for await (const message of flux) {
     console.log(message) // happens asynchronously!
 }
 // and Flux can do much, much more...
