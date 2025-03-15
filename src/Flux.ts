@@ -132,7 +132,7 @@ export class Flux<T> implements AsyncGenerator<Awaited<T>>, Promise<T[]> {
         }
     }
 
-    filter(predicate: (value: T) => boolean): Flux<T> {
+    filter<O = T>(predicate: (value: T) => boolean): Flux<O> {
         const thiss = this
         return Flux.constructFromGeneratorFunction<T>(
             async function* gen() {
@@ -143,7 +143,7 @@ export class Flux<T> implements AsyncGenerator<Awaited<T>>, Promise<T[]> {
                 }
             },
             this
-        )
+        ) as unknown as Flux<O>
     }
 
     /**
@@ -176,6 +176,21 @@ export class Flux<T> implements AsyncGenerator<Awaited<T>>, Promise<T[]> {
                     callback(value)
                     yield value
                 }
+            },
+            this
+        )
+    }
+
+    doAfterLast(callback: (allEvents: T[]) => (void | Promise<void>)): Flux<T> {
+        const thiss = this
+        const events: T[] = []
+        return Flux.constructFromGeneratorFunction(
+            async function* gen() {
+                for await (const value of thiss) {
+                    events.push(value)
+                    yield value
+                }
+                await callback(events)
             },
             this
         )
