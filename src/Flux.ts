@@ -265,6 +265,14 @@ export class Flux<T> implements AsyncGenerator<Awaited<T>>, Promise<T[]> {
         }
     }
 
+    static fromArray<T>(array: T[]): Flux<T> {
+        return Flux.fromGeneratorFunction<T>(async function* gen() {
+            for (const value of array) {
+                yield value
+            }
+        })
+    }
+
     static constructFromGeneratorFunction<T>(
         fn: () => AsyncGenerator<Awaited<T>>,
         upstream: Flux<unknown> | undefined,
