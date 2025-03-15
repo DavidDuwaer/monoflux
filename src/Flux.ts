@@ -215,6 +215,7 @@ export class Flux<T> implements AsyncGenerator<Awaited<T>>, Promise<T[]> {
                 let i = 0
                 for await (const value of thiss) {
                     if (i >= n) {
+                        thiss.cancel()
                         break
                     }
                     i++
