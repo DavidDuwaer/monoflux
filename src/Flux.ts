@@ -208,6 +208,23 @@ export class Flux<T> implements AsyncGenerator<Awaited<T>>, Promise<T[]> {
         )
     }
 
+    take(n: number): Flux<T> {
+        const thiss = this
+        return Flux.constructFromGeneratorFunction(
+            async function* gen() {
+                let i = 0
+                for await (const value of thiss) {
+                    if (i >= n) {
+                        break
+                    }
+                    i++
+                    yield value
+                }
+            },
+            this
+        )
+    }
+
     flatMap<O>(mapper: (value: T) => O[]): Flux<O>
     flatMap<O>(mapper: (value: T) => Promise<O>): Flux<O>
     flatMap<O>(mapper: (value: T) => (Promise<O> | O[])): Flux<O> {
