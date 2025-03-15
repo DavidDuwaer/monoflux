@@ -2,16 +2,15 @@
 Monoflux
  </p>
 <p align="center">
-Stream processing for JS, simplified
+Stream processing for JS that makes streams literally easy as arrays.
  </p>
 
 
 ```javascript
-const {body} = await fetch(/* ... */)
-for await (const message of Flux.fromReadableStream(body)) {
+const flux = ... // a Flux<string>, monoflux's object for an asyncronous stream
+for await (const message of flux) {
     console.log(message) // happens asynchronously!
 }
-// and Flux can do much, much more...
 ```
 
 
@@ -19,6 +18,59 @@ for await (const message of Flux.fromReadableStream(body)) {
 
 ```typescript
 npm install monoflux
+```
+
+# Usage examples
+Creating a Flux
+```typescript
+const flux1 = Flux.fromGeneratorFunction(async function*() {
+  yield 1
+  yield 2
+})
+```
+or
+```typescript
+const flux1 = Flux.fromReadableStream(/* a ReadableStream */)
+```
+
+Transforming a Flux
+```typescript
+chatMessages // a Flux<Message>
+  .filter(chatMessage => chatMessage.recipient === 'david') // a Flux<Message>
+  .map(chatMessage => chatMessage.text) // a Flux<string>
+```
+
+Doing stuff with events
+```typescript
+const chatMessages // = a Flux<string>
+for await (const message of chatMessages) {
+    console.log(message) // happens asynchronously!
+}
+// and Flux can do much, much more...
+```
+
+For collecting all events in an array, you can just treat the Flux like a promise, i.e.
+```typescript
+const fluxOfStrings // = a Flux<string>
+const arrayOfStrings = await fluxOfStrings // becomes a string[]
+```
+
+or
+
+```typescript
+fluxOfStrings // = a Flux<string>
+  .then(arrayOfStrings => /* do stuff */)
+```
+
+Consuming a streaming http response
+```typescript
+const reader = new TextDecoder()
+const {body} = await fetch(/* ... */)
+const flux = Flux.fromReadableStream(body) // a Flux<Uint8Array>, monoflux's object for an asyncronous stream
+  .map(d => reader.decode(d)) // a Flux<string>
+for await (const message of flux) {
+    console.log(message) // happens asynchronously!
+}
 ```
 
 # Feedback
