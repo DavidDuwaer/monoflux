@@ -1,11 +1,11 @@
-export class Flux<T> implements AsyncGenerator<Awaited<T>>, Promise<T[]> {
-    private readonly generator: AsyncGenerator<Awaited<T>>
+export class Flux<T> implements AsyncGenerator<T>, Promise<T[]> {
+    private readonly generator: AsyncGenerator<T>
     private readonly upstream?: Flux<unknown>
     private readonly handleCancel?: (e?: any) => void
     private _closed = false
 
     private constructor(
-        generator: AsyncGenerator<Awaited<T>>,
+        generator: AsyncGenerator<T>,
         upstream: Flux<unknown> | undefined,
         handleCancel?: (e?: any) => void
     ) {
@@ -26,24 +26,24 @@ export class Flux<T> implements AsyncGenerator<Awaited<T>>, Promise<T[]> {
 
     //// Start AsyncGenerator methods ////
 
-    [Symbol.asyncIterator](): AsyncGenerator<Awaited<T>, any, unknown> {
+    [Symbol.asyncIterator](): AsyncGenerator<T, any, unknown> {
         return this
     }
 
-    async next(...args: [] | [unknown]): Promise<IteratorResult<Awaited<T>>>
-    async next(...args: [] | [unknown]): Promise<IteratorResult<Awaited<T>>>
-    async next(...args: [] | [unknown]): Promise<IteratorResult<Awaited<T>>> {
+    async next(...args: [] | [unknown]): Promise<IteratorResult<T>>
+    async next(...args: [] | [unknown]): Promise<IteratorResult<T>>
+    async next(...args: [] | [unknown]): Promise<IteratorResult<T>> {
         const value = await this.generator.next(args)
         return value.value !== ignorableValue
             ? value
             : await this.next(args)
     }
 
-    return(value?: any): Promise<IteratorResult<Awaited<T>, undefined>> {
+    return(value?: any): Promise<IteratorResult<T, undefined>> {
         return this.generator.return(value)
     }
 
-    throw(e: any): Promise<IteratorResult<Awaited<T>>> {
+    throw(e: any): Promise<IteratorResult<T>> {
         return this.generator.throw(e)
     }
 
@@ -247,7 +247,7 @@ export class Flux<T> implements AsyncGenerator<Awaited<T>>, Promise<T[]> {
         )
     }
 
-    transform<O>(defineGenerator: (thisFlux: Flux<T>) => AsyncGenerator<Awaited<O>>) {
+    transform<O>(defineGenerator: (thisFlux: Flux<T>) => AsyncGenerator<O>) {
         const definedGenerator = defineGenerator(this)
         return Flux.constructFromGeneratorFunction<O>(
             async function* gen() {
@@ -283,6 +283,80 @@ export class Flux<T> implements AsyncGenerator<Awaited<T>>, Promise<T[]> {
         }
     }
 
+    static create<T>(
+      creator: (push: (value: T) => void, complete: () => void) => void
+    ) {
+        const values: T[] = [];
+        const resolvers: {resolve: (iteratorResult: IteratorResult<T>) => void, reject: (reason?: any) => void}[] = [];
+        let isDone = false;
+        let error: {value: any} | undefined = undefined;
+
+        const push = (value: T) => {
+            if (isDone) {
+                throw new Error("Cannot push to a completed generator");
+            }
+
+            if (resolvers.length > 0) {
+                const resolve = resolvers.shift()!;
+                resolve.resolve({done: false, value});
+            } else {
+                values.push(value);
+            }
+        };
+
+        const complete = () => {
+            isDone = true;
+            while (resolvers.length > 0) {
+                const resolve = resolvers.shift()!;
+                resolve.resolve({done: true, value: undefined});
+            }
+        };
+
+        creator(push, complete)
+
+        return Flux.fromGenerator<T>({
+            [Symbol.asyncIterator]() {
+                return this;
+            },
+
+            next(...args) {
+                if (error) {
+                    const err = error.value;
+                    error = undefined;
+                    return Promise.reject(err);
+                }
+
+                if (values.length > 0) {
+                    const value = values.shift()!;
+                    return Promise.resolve<IteratorResult<T, any>>({done: false, value});
+                }
+
+                if (isDone) {
+                    return Promise.resolve<IteratorResult<T>>({done: true, value: undefined});
+                }
+
+                return new Promise<IteratorResult<T>>((resolve, reject) => {
+                    resolvers.push({resolve, reject});
+                });
+            },
+
+            return() {
+                complete();
+                return Promise.resolve({done: true, value: undefined});
+            },
+
+            throw(err) {
+                error = err;
+                // Wake up next resolver to propagate the error
+                if (resolvers.length > 0) {
+                    resolvers.shift()?.reject(); // This will make the `.next()` promise reject with the error
+                }
+                return Promise.reject(err);
+            },
+
+        });
+    }
+
     static fromArray<T>(array: T[]): Flux<T> {
         return Flux.fromGeneratorFunction<T>(async function* gen() {
             for (const value of array) {
@@ -292,7 +366,7 @@ export class Flux<T> implements AsyncGenerator<Awaited<T>>, Promise<T[]> {
     }
 
     static constructFromGeneratorFunction<T>(
-        fn: () => AsyncGenerator<Awaited<T>>,
+        fn: () => AsyncGenerator<T>,
         upstream: Flux<unknown> | undefined,
         handleCancel?: (e?: any) => void
     ) {
@@ -304,7 +378,7 @@ export class Flux<T> implements AsyncGenerator<Awaited<T>>, Promise<T[]> {
     }
 
     static fromGeneratorFunction<T>(
-        fn: () => AsyncGenerator<Awaited<T>>,
+        fn: () => AsyncGenerator<T>,
         handleCancel?: (e?: any) => void
     ) {
         return Flux.constructFromGeneratorFunction(
@@ -315,7 +389,7 @@ export class Flux<T> implements AsyncGenerator<Awaited<T>>, Promise<T[]> {
     }
 
     static fromGenerator<T>(
-        generator: AsyncGenerator<Awaited<T>>,
+        generator: AsyncGenerator<T>,
         handleCancel?: (e?: any) => void
     ) {
         return new Flux<T>(generator, undefined, handleCancel);
