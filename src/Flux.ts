@@ -284,12 +284,12 @@ export class Flux<T> implements AsyncGenerator<T>, Promise<T[]> {
     }
 
     static create<T>(
-      creator: (push: (value: T) => void, complete: () => void) => void
+      creator: (push: (value: T) => void, complete: () => void, reject: (err: any) => void) => (void | Promise<void>)
     ) {
         const values: T[] = [];
         const resolvers: {resolve: (iteratorResult: IteratorResult<T>) => void, reject: (reason?: any) => void}[] = [];
         let isDone = false;
-        let error: {value: any} | undefined = undefined;
+        let error: {value: any} | undefined = undefined
 
         const push = (value: T) => {
             if (isDone) {
@@ -302,7 +302,7 @@ export class Flux<T> implements AsyncGenerator<T>, Promise<T[]> {
             } else {
                 values.push(value);
             }
-        };
+        }
 
         const complete = () => {
             isDone = true;
@@ -310,48 +310,63 @@ export class Flux<T> implements AsyncGenerator<T>, Promise<T[]> {
                 const resolve = resolvers.shift()!;
                 resolve.resolve({done: true, value: undefined});
             }
-        };
+        }
 
-        creator(push, complete)
+        const reject = (err: any) => {
+            error = {value: err}
+            // Wake up next resolver to propagate the error
+            resolvers.shift()?.reject(err); // This will make the `.next()` promise reject with the error
+        }
+
+        (async () => {
+            try {
+                await creator(
+                  push,
+                  complete,
+                  reject,
+                )
+                if (!isDone || error === undefined) {
+                    complete()
+                }
+            } catch (err) {
+                reject(err)
+            }
+        })()
 
         return Flux.fromGenerator<T>({
             [Symbol.asyncIterator]() {
-                return this;
+                return this
             },
 
             next(...args) {
                 if (error) {
-                    const err = error.value;
-                    error = undefined;
-                    return Promise.reject(err);
+                    const err = error.value
+                    error = undefined
+                    return Promise.reject(err)
                 }
 
                 if (values.length > 0) {
                     const value = values.shift()!;
-                    return Promise.resolve<IteratorResult<T, any>>({done: false, value});
+                    return Promise.resolve<IteratorResult<T, any>>({done: false, value})
                 }
 
                 if (isDone) {
-                    return Promise.resolve<IteratorResult<T>>({done: true, value: undefined});
+                    return Promise.resolve<IteratorResult<T>>({done: true, value: undefined})
                 }
 
                 return new Promise<IteratorResult<T>>((resolve, reject) => {
-                    resolvers.push({resolve, reject});
+                    resolvers.push({resolve, reject})
                 });
             },
 
             return() {
                 complete();
-                return Promise.resolve({done: true, value: undefined});
+                return Promise.resolve({done: true, value: undefined})
             },
 
             throw(err) {
-                error = err;
-                // Wake up next resolver to propagate the error
-                if (resolvers.length > 0) {
-                    resolvers.shift()?.reject(); // This will make the `.next()` promise reject with the error
-                }
-                return Promise.reject(err);
+                reject(err)
+                return Promise.reject(err)
             },
 
         });
