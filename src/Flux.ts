@@ -232,14 +232,52 @@ export class Flux<T> implements AsyncGenerator<T>, Promise<T[]> {
         const thiss = this
         return Flux.constructFromGeneratorFunction(
             async function* gen() {
+                const pendingPromises: Promise<O>[] = []
+                const resolvedValues: O[] = []
+                const resolvedIndexes = new Set<number>()
+                let yieldedUpTo = 0
+
+                // Process all input values and start their async operations
                 for await (const value of thiss) {
                     const result = mapper(value)
+
                     if (Array.isArray(result)) {
+                        // Synchronous array results can be yielded immediately
                         for (const r of result) {
                             yield r
                         }
                     } else {
-                        yield await result
+                        // Start the promise and track it
+                        const promiseIndex = pendingPromises.length
+                        pendingPromises.push(result)
+
+                        // Mark when this promise resolves
+                        result.then(resolved => {
+                            resolvedValues[promiseIndex] = resolved
+                            resolvedIndexes.add(promiseIndex)
+                        }).catch(() => {
+                            // Mark as resolved even on error to not block the sequence
+                            resolvedIndexes.add(promiseIndex)
+                        })
+                    }
+                }
+
+                // Yield results in order as they become available
+                while (yieldedUpTo < pendingPromises.length) {
+                    if (resolvedIndexes.has(yieldedUpTo)) {
+                        // This promise has resolved, yield its value
+                        if (resolvedValues[yieldedUpTo] !== undefined) {
+                            yield resolvedValues[yieldedUpTo]
+                        }
+                        yieldedUpTo++
+                    } else {
+                        // Wait for the next promise in sequence to resolve
+                        try {
+                            yield await pendingPromises[yieldedUpTo]
+                        } catch (e) {
+                            // Skip failed promises
+                        }
+                        yieldedUpTo++
                     }
                 }
             },
