@@ -89,6 +89,40 @@ describe('Flux.flatMap', () => {
             expect(executionOrder.indexOf('end-2')).to.be.lessThan(executionOrder.indexOf('end-3'))
             expect(executionOrder.indexOf('end-3')).to.be.lessThan(executionOrder.indexOf('end-1'))
         })
+
+        it('should respect concurrency limit for Promise callbacks', async () => {
+            const executionOrder: string[] = []
+            let currentlyRunning = 0
+            let maxConcurrentlyRunning = 0
+
+            const flux = Flux.fromArray([1, 2, 3, 4, 5])
+
+            const result = flux.flatMap(async (value) => {
+                currentlyRunning++
+                maxConcurrentlyRunning = Math.max(maxConcurrentlyRunning, currentlyRunning)
+                executionOrder.push(`start-${value} (running: ${currentlyRunning})`)
+
+                // All have same delay to test concurrency limiting
+                await new Promise(resolve => setTimeout(resolve, 50))
+
+                currentlyRunning--
+                executionOrder.push(`end-${value}`)
+                return value * 10
+            }, { concurrency: 2 })
+
+            await result.asList()
+
+            // With concurrency=2, max 2 should run concurrently
+            expect(maxConcurrentlyRunning).to.equal(2)
+
+            // Verify we never exceeded the limit
+            for (const event of executionOrder) {
+                if (event.includes('running:')) {
+                    const runningCount = parseInt(event.match(/running: (\d+)/)?.[1] || '0')
+                    expect(runningCount).to.be.at.most(2)
+                }
+            }
+        })
     })
 
     describe('with Flux mapper', () => {
@@ -209,6 +243,42 @@ describe('Flux.flatMap', () => {
 
             const list = await result.asList()
             expect(list).to.deep.equal([10, 11, 20, 21, 30, 31])
+        })
+
+        it('should respect concurrency limit for Flux callbacks', async () => {
+            const executionOrder: string[] = []
+            let currentlyRunning = 0
+            let maxConcurrentlyRunning = 0
+
+            const flux = Flux.fromArray([1, 2, 3, 4, 5])
+
+            const result = flux.flatMap((value) => {
+                return Flux.fromGeneratorFunction(async function* () {
+                    currentlyRunning++
+                    maxConcurrentlyRunning = Math.max(maxConcurrentlyRunning, currentlyRunning)
+                    executionOrder.push(`start-${value} (running: ${currentlyRunning})`)
+
+                    // All have same delay to test concurrency limiting
+                    await new Promise(resolve => setTimeout(resolve, 50))
+
+                    currentlyRunning--
+                    executionOrder.push(`end-${value}`)
+                    yield value * 10
+                })
+            }, { concurrency: 2 })
+
+            await result.asList()
+
+            // With concurrency=2, max 2 should run concurrently
+            expect(maxConcurrentlyRunning).to.equal(2)
+
+            // Verify we never exceeded the limit
+            for (const event of executionOrder) {
+                if (event.includes('running:')) {
+                    const runningCount = parseInt(event.match(/running: (\d+)/)?.[1] || '0')
+                    expect(runningCount).to.be.at.most(2)
+                }
+            }
         })
     })
 })

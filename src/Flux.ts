@@ -227,9 +227,9 @@ export class Flux<T> implements AsyncGenerator<T>, Promise<T[]> {
     }
 
     flatMap<O>(mapper: (value: T) => O[]): Flux<O>
-    flatMap<O>(mapper: (value: T) => Flux<O>): Flux<O>
-    flatMap<O>(mapper: (value: T) => Promise<O>): Flux<O>
-    flatMap<O>(mapper: (value: T) => (Promise<O> | O[] | Flux<O>)): Flux<O> {
+    flatMap<O>(mapper: (value: T) => Promise<O>, options?: { concurrency?: number }): Flux<O>
+    flatMap<O>(mapper: (value: T) => Flux<O>, options?: { concurrency?: number }): Flux<O>
+    flatMap<O>(mapper: (value: T) => (Promise<O> | O[] | Flux<O>), options?: { concurrency?: number }): Flux<O> {
         const thiss = this
         return Flux.constructFromGeneratorFunction(
             async function* gen() {
@@ -243,12 +243,14 @@ export class Flux<T> implements AsyncGenerator<T>, Promise<T[]> {
 
                 const firstResult = mapper(firstValue.value)
 
+                const concurrency = options?.concurrency
+
                 if (Array.isArray(firstResult)) {
                     yield* flatMapArrayImpl(mapper as (value: T) => O[], firstValue.value, firstResult, iterator)
                 } else if (firstResult instanceof Flux) {
-                    yield* flatMapFluxImpl(mapper as (value: T) => Flux<O>, firstValue.value, firstResult, iterator)
+                    yield* flatMapFluxImpl(mapper as (value: T) => Flux<O>, firstValue.value, firstResult as Flux<O>, iterator, concurrency)
                 } else {
-                    yield* flatMapPromiseImpl(mapper as (value: T) => Promise<O>, firstValue.value, firstResult, iterator)
+                    yield* flatMapPromiseImpl(mapper as (value: T) => Promise<O>, firstValue.value, firstResult as Promise<O>, iterator, concurrency)
                 }
             },
             this
@@ -488,36 +490,62 @@ function flatMapArrayImpl<T, O>(mapper: (value: T) => O[], firstValue: T, firstR
     })()
 }
 
-function flatMapPromiseImpl<T, O>(mapper: (value: T) => Promise<O>, firstValue: T, firstPromise: Promise<O>, iterator: AsyncIterator<T>): AsyncGenerator<O> {
+function flatMapPromiseImpl<T, O>(mapper: (value: T) => Promise<O>, firstValue: T, firstPromise: Promise<O>, iterator: AsyncIterator<T>, concurrency?: number): AsyncGenerator<O> {
     return (async function* () {
-        const pendingPromises: Promise<O>[] = [firstPromise]
+        // Collect all values first
+        const allValues: T[] = [firstValue]
+        let next = await iterator.next()
+        while (!next.done) {
+            allValues.push(next.value)
+            next = await iterator.next()
+        }
+
+        const pendingPromises: Promise<O>[] = new Array(allValues.length)
         const resolvedValues: O[] = []
         const resolvedIndexes = new Set<number>()
         let yieldedUpTo = 0
 
-        // Start first promise tracking
-        firstPromise.then(resolved => {
-            resolvedValues[0] = resolved
-            resolvedIndexes.add(0)
-        }).catch(() => {
-            resolvedIndexes.add(0)
-        })
+        if (concurrency === undefined) {
+            // No concurrency limit - start all promises immediately
+            for (let i = 0; i < allValues.length; i++) {
+                const promise = i === 0 ? firstPromise : mapper(allValues[i])
+                pendingPromises[i] = promise
 
-        // Start remaining promises in parallel
-        let next = await iterator.next()
-        while (!next.done) {
-            const promise = mapper(next.value)
-            const index = pendingPromises.length
-            pendingPromises.push(promise)
+                promise.then(resolved => {
+                    resolvedValues[i] = resolved
+                    resolvedIndexes.add(i)
+                }).catch(() => {
+                    resolvedIndexes.add(i)
+                })
+            }
+        } else {
+            // Concurrency limited - use semaphore pattern
+            let currentIndex = 0
+            let runningCount = 0
 
-            promise.then(resolved => {
-                resolvedValues[index] = resolved
-                resolvedIndexes.add(index)
-            }).catch(() => {
-                resolvedIndexes.add(index)
-            })
+            const startNext = () => {
+                while (runningCount < concurrency && currentIndex < allValues.length) {
+                    const index = currentIndex
+                    currentIndex++
+                    runningCount++
 
-            next = await iterator.next()
+                    const promise = index === 0 ? firstPromise : mapper(allValues[index])
+                    pendingPromises[index] = promise
+
+                    promise.then(resolved => {
+                        resolvedValues[index] = resolved
+                        resolvedIndexes.add(index)
+                        runningCount--
+                        startNext()
+                    }).catch(() => {
+                        resolvedIndexes.add(index)
+                        runningCount--
+                        startNext()
+                    })
+                }
+            }
+
+            startNext()
         }
 
         // Yield results in order
@@ -539,49 +567,72 @@ function flatMapPromiseImpl<T, O>(mapper: (value: T) => Promise<O>, firstValue: 
     })()
 }
 
-function flatMapFluxImpl<T, O>(mapper: (value: T) => Flux<O>, firstValue: T, firstFlux: Flux<O>, iterator: AsyncIterator<T>): AsyncGenerator<O> {
+function flatMapFluxImpl<T, O>(mapper: (value: T) => Flux<O>, firstValue: T, firstFlux: Flux<O>, iterator: AsyncIterator<T>, concurrency?: number): AsyncGenerator<O> {
     return (async function* () {
-        const pendingFluxes: Flux<O>[] = [firstFlux]
+        // Collect all values first
+        const allValues: T[] = [firstValue]
+        let next = await iterator.next()
+        while (!next.done) {
+            allValues.push(next.value)
+            next = await iterator.next()
+        }
+
+        const pendingFluxes: Flux<O>[] = new Array(allValues.length)
         const buffers = new Map<number, O[]>()
         const completedIndexes = new Set<number>()
         let yieldedUpTo = 0
 
-        // Start first flux
-        buffers.set(0, [])
-        ;(async () => {
-            try {
-                for await (const item of firstFlux) {
-                    buffers.get(0)!.push(item)
-                }
-            } catch (error) {
-                buffers.get(0)!.push({ __error: error } as any)
-            } finally {
-                completedIndexes.add(0)
-            }
-        })()
+        if (concurrency === undefined) {
+            // No concurrency limit - start all fluxes immediately
+            for (let i = 0; i < allValues.length; i++) {
+                const flux = i === 0 ? firstFlux : mapper(allValues[i])
+                pendingFluxes[i] = flux
+                buffers.set(i, [])
 
-        // Start remaining fluxes in parallel
-        let next = await iterator.next()
-        while (!next.done) {
-            const flux = mapper(next.value)
-            const index = pendingFluxes.length
-            pendingFluxes.push(flux)
-            buffers.set(index, [])
-
-            // Consume flux in parallel
-            ;(async () => {
-                try {
-                    for await (const item of flux) {
-                        buffers.get(index)!.push(item)
+                ;(async () => {
+                    try {
+                        for await (const item of flux) {
+                            buffers.get(i)!.push(item)
+                        }
+                    } catch (error) {
+                        buffers.get(i)!.push({ __error: error } as any)
+                    } finally {
+                        completedIndexes.add(i)
                     }
-                } catch (error) {
-                    buffers.get(index)!.push({ __error: error } as any)
-                } finally {
-                    completedIndexes.add(index)
-                }
-            })()
+                })()
+            }
+        } else {
+            // Concurrency limited - use semaphore pattern
+            let currentIndex = 0
+            let runningCount = 0
 
-            next = await iterator.next()
+            const startNext = () => {
+                while (runningCount < concurrency && currentIndex < allValues.length) {
+                    const index = currentIndex
+                    currentIndex++
+                    runningCount++
+
+                    const flux = index === 0 ? firstFlux : mapper(allValues[index])
+                    pendingFluxes[index] = flux
+                    buffers.set(index, [])
+
+                    ;(async () => {
+                        try {
+                            for await (const item of flux) {
+                                buffers.get(index)!.push(item)
+                            }
+                        } catch (error) {
+                            buffers.get(index)!.push({ __error: error } as any)
+                        } finally {
+                            completedIndexes.add(index)
+                            runningCount--
+                            startNext()
+                        }
+                    })()
+                }
+            }
+
+            startNext()
         }
 
         // Yield results in order
