@@ -228,62 +228,33 @@ export class Flux<T> implements AsyncGenerator<T>, Promise<T[]> {
 
     flatMap<O>(mapper: (value: T) => O[]): Flux<O>
     flatMap<O>(mapper: (value: T) => Promise<O>): Flux<O>
-    flatMap<O>(mapper: (value: T) => (Promise<O> | O[])): Flux<O> {
+    flatMap<O>(mapper: (value: T) => Flux<O>): Flux<O>
+    flatMap<O>(mapper: (value: T) => (Promise<O> | O[] | Flux<O>)): Flux<O> {
         const thiss = this
         return Flux.constructFromGeneratorFunction(
             async function* gen() {
-                const pendingPromises: Promise<O>[] = []
-                const resolvedValues: O[] = []
-                const resolvedIndexes = new Set<number>()
-                let yieldedUpTo = 0
+                // Get first value to determine type
+                const iterator = thiss[Symbol.asyncIterator]()
+                const firstValue = await iterator.next()
 
-                // Process all input values and start their async operations
-                for await (const value of thiss) {
-                    const result = mapper(value)
-
-                    if (Array.isArray(result)) {
-                        // Synchronous array results can be yielded immediately
-                        for (const r of result) {
-                            yield r
-                        }
-                    } else {
-                        // Start the promise and track it
-                        const promiseIndex = pendingPromises.length
-                        pendingPromises.push(result)
-
-                        // Mark when this promise resolves
-                        result.then(resolved => {
-                            resolvedValues[promiseIndex] = resolved
-                            resolvedIndexes.add(promiseIndex)
-                        }).catch(() => {
-                            // Mark as resolved even on error to not block the sequence
-                            resolvedIndexes.add(promiseIndex)
-                        })
-                    }
+                if (firstValue.done) {
+                    return
                 }
 
-                // Yield results in order as they become available
-                while (yieldedUpTo < pendingPromises.length) {
-                    if (resolvedIndexes.has(yieldedUpTo)) {
-                        // This promise has resolved, yield its value
-                        if (resolvedValues[yieldedUpTo] !== undefined) {
-                            yield resolvedValues[yieldedUpTo]
-                        }
-                        yieldedUpTo++
-                    } else {
-                        // Wait for the next promise in sequence to resolve
-                        try {
-                            yield await pendingPromises[yieldedUpTo]
-                        } catch (e) {
-                            // Skip failed promises
-                        }
-                        yieldedUpTo++
-                    }
+                const firstResult = mapper(firstValue.value)
+
+                if (Array.isArray(firstResult)) {
+                    yield* flatMapArrayImpl(mapper as (value: T) => O[], firstValue.value, firstResult, iterator)
+                } else if (firstResult instanceof Flux) {
+                    yield* flatMapFluxImpl(mapper as (value: T) => Flux<O>, firstValue.value, firstResult, iterator)
+                } else {
+                    yield* flatMapPromiseImpl(mapper as (value: T) => Promise<O>, firstValue.value, firstResult, iterator)
                 }
             },
             this
         )
     }
+
 
     transform<O>(defineGenerator: (thisFlux: Flux<T>) => AsyncGenerator<O>) {
         const definedGenerator = defineGenerator(this)
@@ -496,6 +467,142 @@ export class Flux<T> implements AsyncGenerator<T>, Promise<T[]> {
     public get closed() {
         return this._closed
     }
+}
+
+function flatMapArrayImpl<T, O>(mapper: (value: T) => O[], firstValue: T, firstResult: O[], iterator: AsyncIterator<T>): AsyncGenerator<O> {
+    return (async function* () {
+        // Yield first result
+        for (const item of firstResult) {
+            yield item
+        }
+
+        // Continue with remaining values
+        let next = await iterator.next()
+        while (!next.done) {
+            const result = mapper(next.value)
+            for (const item of result) {
+                yield item
+            }
+            next = await iterator.next()
+        }
+    })()
+}
+
+function flatMapPromiseImpl<T, O>(mapper: (value: T) => Promise<O>, firstValue: T, firstPromise: Promise<O>, iterator: AsyncIterator<T>): AsyncGenerator<O> {
+    return (async function* () {
+        const pendingPromises: Promise<O>[] = [firstPromise]
+        const resolvedValues: O[] = []
+        const resolvedIndexes = new Set<number>()
+        let yieldedUpTo = 0
+
+        // Start first promise tracking
+        firstPromise.then(resolved => {
+            resolvedValues[0] = resolved
+            resolvedIndexes.add(0)
+        }).catch(() => {
+            resolvedIndexes.add(0)
+        })
+
+        // Start remaining promises in parallel
+        let next = await iterator.next()
+        while (!next.done) {
+            const promise = mapper(next.value)
+            const index = pendingPromises.length
+            pendingPromises.push(promise)
+
+            promise.then(resolved => {
+                resolvedValues[index] = resolved
+                resolvedIndexes.add(index)
+            }).catch(() => {
+                resolvedIndexes.add(index)
+            })
+
+            next = await iterator.next()
+        }
+
+        // Yield results in order
+        while (yieldedUpTo < pendingPromises.length) {
+            if (resolvedIndexes.has(yieldedUpTo)) {
+                if (resolvedValues[yieldedUpTo] !== undefined) {
+                    yield resolvedValues[yieldedUpTo]
+                }
+                yieldedUpTo++
+            } else {
+                try {
+                    yield await pendingPromises[yieldedUpTo]
+                } catch (e) {
+                    // Skip failed promises
+                }
+                yieldedUpTo++
+            }
+        }
+    })()
+}
+
+function flatMapFluxImpl<T, O>(mapper: (value: T) => Flux<O>, firstValue: T, firstFlux: Flux<O>, iterator: AsyncIterator<T>): AsyncGenerator<O> {
+    return (async function* () {
+        const pendingFluxes: Flux<O>[] = [firstFlux]
+        const buffers = new Map<number, O[]>()
+        const completedIndexes = new Set<number>()
+        let yieldedUpTo = 0
+
+        // Start first flux
+        buffers.set(0, [])
+        ;(async () => {
+            try {
+                for await (const item of firstFlux) {
+                    buffers.get(0)!.push(item)
+                }
+            } catch (error) {
+                buffers.get(0)!.push({ __error: error } as any)
+            } finally {
+                completedIndexes.add(0)
+            }
+        })()
+
+        // Start remaining fluxes in parallel
+        let next = await iterator.next()
+        while (!next.done) {
+            const flux = mapper(next.value)
+            const index = pendingFluxes.length
+            pendingFluxes.push(flux)
+            buffers.set(index, [])
+
+            // Consume flux in parallel
+            ;(async () => {
+                try {
+                    for await (const item of flux) {
+                        buffers.get(index)!.push(item)
+                    }
+                } catch (error) {
+                    buffers.get(index)!.push({ __error: error } as any)
+                } finally {
+                    completedIndexes.add(index)
+                }
+            })()
+
+            next = await iterator.next()
+        }
+
+        // Yield results in order
+        while (yieldedUpTo < pendingFluxes.length) {
+            const buffer = buffers.get(yieldedUpTo)!
+
+            while (buffer.length === 0 && !completedIndexes.has(yieldedUpTo)) {
+                await new Promise(resolve => setTimeout(resolve, 1))
+            }
+
+            while (buffer.length > 0) {
+                const item = buffer.shift()!
+                if (item && typeof item === 'object' && '__error' in item) {
+                    throw item.__error
+                }
+                yield item
+            }
+
+            yieldedUpTo++
+        }
+    })()
 }
 
 function isGenerator<T>(obj: any): obj is AsyncGenerator<T> {
