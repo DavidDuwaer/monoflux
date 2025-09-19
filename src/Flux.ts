@@ -410,6 +410,31 @@ export class Flux<T> implements AsyncGenerator<T>, Promise<T[]> {
         });
     }
 
+    static just<T>(...array: T[]): Flux<T> {
+        return Flux.from(array)
+    }
+
+    static from<T>(array: T[]): Flux<T>
+    static from<T>(generator: AsyncGenerator<T>, handleCancel?: (e?: any) => void): Flux<T>
+    static from<T>(stream: ReadableStream<T>, handleCancel?: (e?: any) => void): Flux<T>
+    static from<T>(fn: () => AsyncGenerator<T>, handleCancel?: (e?: any) => void): Flux<T>
+    static from<T>(
+        source: T[] | AsyncGenerator<T> | ReadableStream<T> | (() => AsyncGenerator<T>),
+        handleCancel?: (e?: any) => void
+    ): Flux<T> {
+        if (Array.isArray(source)) {
+            return Flux.fromArray(source)
+        } else if (typeof source === 'function') {
+            return Flux.fromGeneratorFunction(source, handleCancel)
+        } else if (source instanceof ReadableStream) {
+            return Flux.fromReadableStream(source, handleCancel)
+        } else if (isGenerator(source)) {
+            return Flux.fromGenerator(source, handleCancel)
+        } else {
+            throw new TypeError('Source must be an Array, AsyncGenerator, ReadableStream, or a generator function')
+        }
+    }
+
     static fromArray<T>(array: T[]): Flux<T> {
         return Flux.fromGeneratorFunction<T>(async function* gen() {
             for (const value of array) {
@@ -471,6 +496,15 @@ export class Flux<T> implements AsyncGenerator<T>, Promise<T[]> {
     public get closed() {
         return this._closed
     }
+}
+
+function isGenerator<T>(obj: any): obj is AsyncGenerator<T> {
+    return obj !== null &&
+        typeof obj === 'object' &&
+        typeof obj.next === 'function' &&
+        typeof obj.return === 'function' &&
+        typeof obj.throw === 'function' &&
+        Symbol.asyncIterator in obj
 }
 
 const ignorableValue = {}
