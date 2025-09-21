@@ -227,8 +227,8 @@ export class Flux<T> implements AsyncGenerator<T>, Promise<T[]> {
     }
 
     flatMap<O>(mapper: (value: T) => O[]): Flux<O>
-    flatMap<O>(mapper: (value: T) => Promise<O>, options?: { concurrency?: number }): Flux<O>
     flatMap<O>(mapper: (value: T) => Flux<O>, options?: { concurrency?: number }): Flux<O>
+    flatMap<O>(mapper: (value: T) => Promise<O>, options?: { concurrency?: number }): Flux<O>
     flatMap<O>(mapper: (value: T) => (Promise<O> | O[] | Flux<O>), options?: { concurrency?: number }): Flux<O> {
         const thiss = this
         return Flux.constructFromGeneratorFunction(
