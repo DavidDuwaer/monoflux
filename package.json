@@ -1,6 +1,6 @@
 {
   "name": "monoflux",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Stream processing for JS simplified",
   "keywords": [
     "stream",
