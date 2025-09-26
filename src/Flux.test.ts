@@ -62,4 +62,108 @@ describe('Flux', () => {
       }
     })
   })
+
+  describe('error handling in callbacks', () => {
+    it('should propagate error from synchronous map callback to try/catch around await', async () => {
+      const flux = Flux.fromArray([1, 2, 3])
+      const specificError = new Error('Sync error in map')
+
+      const mappedFlux = flux.map((value) => {
+        if (value === 2) {
+          throw specificError
+        }
+        return value * 2
+      })
+
+      try {
+        await mappedFlux
+        expect.fail('Should have thrown an error')
+      } catch (error) {
+        expect(error).to.equal(specificError)
+      }
+    })
+
+    it('should propagate error from async callback before await to try/catch', async () => {
+      const flux = Flux.fromArray([1, 2, 3])
+      const specificError = new Error('Async error before await')
+
+      const mappedFlux = flux.flatMap(async (value) => {
+        // Error thrown before any await - still synchronous part
+        if (value === 2) {
+          throw specificError
+        }
+        return value * 2
+      })
+
+      try {
+        await mappedFlux
+        expect.fail('Should have thrown an error')
+      } catch (error) {
+        expect(error).to.equal(specificError)
+      }
+    })
+
+    it('should propagate error from async callback after await to try/catch', async () => {
+      const flux = Flux.fromArray([1, 2, 3])
+      const specificError = new Error('Async error after await')
+
+      const mappedFlux = flux.flatMap(async (value) => {
+        // Break synchronicity with await
+        await timer(10)
+
+        // Error thrown after await - truly asynchronous
+        if (value === 2) {
+          throw specificError
+        }
+        return value * 2
+      })
+
+      try {
+        await mappedFlux
+        expect.fail('Should have thrown an error')
+      } catch (error) {
+        expect(error).to.equal(specificError)
+      }
+    })
+
+    it('should propagate error from synchronous filter callback to try/catch around await', async () => {
+      const flux = Flux.fromArray([1, 2, 3])
+      const specificError = new Error('Sync error in filter')
+
+      const filteredFlux = flux.filter((value) => {
+        if (value === 2) {
+          throw specificError
+        }
+        return value > 1
+      })
+
+      try {
+        await filteredFlux
+        expect.fail('Should have thrown an error')
+      } catch (error) {
+        expect(error).to.equal(specificError)
+      }
+    })
+
+    it('should propagate error from Flux mapper to try/catch', async () => {
+      const flux = Flux.fromArray([1, 2, 3])
+      const specificError = new Error('Error in Flux mapper')
+
+      const mappedFlux = flux.flatMap((value) => {
+        return Flux.fromGeneratorFunction(async function* () {
+          if (value === 2) {
+            throw specificError
+          }
+          yield value * 2
+        })
+      })
+
+      try {
+        await mappedFlux
+        expect.fail('Should have thrown an error')
+      } catch (error) {
+        expect(error).to.equal(specificError)
+      }
+    })
+  })
 })

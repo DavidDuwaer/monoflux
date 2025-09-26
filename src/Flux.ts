@@ -502,6 +502,7 @@ function flatMapPromiseImpl<T, O>(mapper: (value: T) => Promise<O>, firstValue: 
 
         const pendingPromises: Promise<O>[] = new Array(allValues.length)
         const resolvedValues: O[] = []
+        const resolvedErrors: any[] = []
         const resolvedIndexes = new Set<number>()
         let yieldedUpTo = 0
 
@@ -514,7 +515,8 @@ function flatMapPromiseImpl<T, O>(mapper: (value: T) => Promise<O>, firstValue: 
                 promise.then(resolved => {
                     resolvedValues[i] = resolved
                     resolvedIndexes.add(i)
-                }).catch(() => {
+                }).catch(error => {
+                    resolvedErrors[i] = error
                     resolvedIndexes.add(i)
                 })
             }
@@ -537,7 +539,8 @@ function flatMapPromiseImpl<T, O>(mapper: (value: T) => Promise<O>, firstValue: 
                         resolvedIndexes.add(index)
                         runningCount--
                         startNext()
-                    }).catch(() => {
+                    }).catch(error => {
+                        resolvedErrors[index] = error
                         resolvedIndexes.add(index)
                         runningCount--
                         startNext()
@@ -551,16 +554,15 @@ function flatMapPromiseImpl<T, O>(mapper: (value: T) => Promise<O>, firstValue: 
         // Yield results in order
         while (yieldedUpTo < pendingPromises.length) {
             if (resolvedIndexes.has(yieldedUpTo)) {
+                if (resolvedErrors[yieldedUpTo] !== undefined) {
+                    throw resolvedErrors[yieldedUpTo]
+                }
                 if (resolvedValues[yieldedUpTo] !== undefined) {
                     yield resolvedValues[yieldedUpTo]
                 }
                 yieldedUpTo++
             } else {
-                try {
-                    yield await pendingPromises[yieldedUpTo]
-                } catch (e) {
-                    // Skip failed promises
-                }
+                yield await pendingPromises[yieldedUpTo]
                 yieldedUpTo++
             }
         }
