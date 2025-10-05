@@ -123,6 +123,94 @@ describe('Flux.flatMap', () => {
                 }
             }
         })
+
+        it('should process new emissions while previous async callback is still running', async () => {
+            const executionOrder: string[] = []
+
+            // Create a flux that emits asynchronously
+            const sourceFlux = Flux.fromGeneratorFunction(async function* () {
+                executionOrder.push('emit-1')
+                yield 1
+                await new Promise(resolve => setTimeout(resolve, 50))
+                executionOrder.push('emit-2')
+                yield 2
+            })
+
+            await sourceFlux.flatMap(async (value) => {
+                executionOrder.push(`callback-start-${value}`)
+
+                // First callback takes a long time (200ms)
+                // Second emission happens at 50ms, so first callback still running
+                const delay = value === 1 ? 200 : 50
+                await new Promise(resolve => setTimeout(resolve, delay))
+
+                executionOrder.push(`callback-end-${value}`)
+            })
+
+            // Verify execution order:
+            // 1. emit-1
+            // 2. callback-start-1
+            // 3. emit-2 (happens while callback-1 is still running)
+            // 4. callback-start-2 (starts even though callback-1 is still running)
+            // 5. callback-end-2 (finishes first because shorter delay)
+            // 6. callback-end-1 (finishes last)
+
+            expect(executionOrder[0]).to.equal('emit-1')
+            expect(executionOrder[1]).to.equal('callback-start-1')
+            expect(executionOrder[2]).to.equal('emit-2')
+            expect(executionOrder[3]).to.equal('callback-start-2')
+
+            // Callback 2 should finish before callback 1
+            const callback2EndIndex = executionOrder.indexOf('callback-end-2')
+            const callback1EndIndex = executionOrder.indexOf('callback-end-1')
+            expect(callback2EndIndex).to.be.lessThan(callback1EndIndex)
+        })
+
+        it('should process new emissions from Flux.create while previous async callback is still running', async () => {
+            const executionOrder: string[] = []
+
+            // Create a flux using Flux.create that emits asynchronously
+            const sourceFlux = Flux.create<number>(async (push, complete) => {
+                executionOrder.push('emit-1')
+                push(1)
+                await new Promise(resolve => setTimeout(resolve, 50))
+                executionOrder.push('emit-2')
+                push(2)
+                complete()
+            })
+
+            const result = sourceFlux.flatMap(async (value) => {
+                executionOrder.push(`callback-start-${value}`)
+
+                // First callback takes a long time (200ms)
+                // Second emission happens at 50ms, so first callback still running
+                const delay = value === 1 ? 200 : 50
+                await new Promise(resolve => setTimeout(resolve, delay))
+
+                executionOrder.push(`callback-end-${value}`)
+                return value * 10
+            })
+
+            await result.asList()
+
+            // Verify execution order:
+            // 1. emit-1
+            // 2. callback-start-1
+            // 3. emit-2 (happens while callback-1 is still running)
+            // 4. callback-start-2 (starts even though callback-1 is still running)
+            // 5. callback-end-2 (finishes first because shorter delay)
+            // 6. callback-end-1 (finishes last)
+
+            expect(executionOrder[0]).to.equal('emit-1')
+            expect(executionOrder[1]).to.equal('callback-start-1')
+            expect(executionOrder[2]).to.equal('emit-2')
+            expect(executionOrder[3]).to.equal('callback-start-2')
+
+            // Callback 2 should finish before callback 1
+            const callback2EndIndex = executionOrder.indexOf('callback-end-2')
+            const callback1EndIndex = executionOrder.indexOf('callback-end-1')
+            expect(callback2EndIndex).to.be.lessThan(callback1EndIndex)
+        })
     })
 
     describe('with Flux mapper', () => {

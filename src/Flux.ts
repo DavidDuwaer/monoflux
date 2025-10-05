@@ -492,80 +492,90 @@ function flatMapArrayImpl<T, O>(mapper: (value: T) => O[], firstValue: T, firstR
 
 function flatMapPromiseImpl<T, O>(mapper: (value: T) => Promise<O>, firstValue: T, firstPromise: Promise<O>, iterator: AsyncIterator<T>, concurrency?: number): AsyncGenerator<O> {
     return (async function* () {
-        // Collect all values first
-        const allValues: T[] = [firstValue]
-        let next = await iterator.next()
-        while (!next.done) {
-            allValues.push(next.value)
-            next = await iterator.next()
-        }
-
-        const pendingPromises: Promise<O>[] = new Array(allValues.length)
+        const pendingPromises: Promise<O>[] = []
         const resolvedValues: O[] = []
         const resolvedErrors: any[] = []
         const resolvedIndexes = new Set<number>()
         let yieldedUpTo = 0
+        let nextIndex = 0
+        let sourceComplete = false
+        let runningCount = 0
 
-        if (concurrency === undefined) {
-            // No concurrency limit - start all promises immediately
-            for (let i = 0; i < allValues.length; i++) {
-                const promise = i === 0 ? firstPromise : mapper(allValues[i])
-                pendingPromises[i] = promise
+        // Helper to start a promise for a value
+        const startPromise = (value: T, index: number, promise?: Promise<O>) => {
+            const p = promise || mapper(value)
+            pendingPromises[index] = p
 
-                promise.then(resolved => {
-                    resolvedValues[i] = resolved
-                    resolvedIndexes.add(i)
-                }).catch(error => {
-                    resolvedErrors[i] = error
-                    resolvedIndexes.add(i)
-                })
-            }
-        } else {
-            // Concurrency limited - use semaphore pattern
-            let currentIndex = 0
-            let runningCount = 0
-
-            const startNext = () => {
-                while (runningCount < concurrency && currentIndex < allValues.length) {
-                    const index = currentIndex
-                    currentIndex++
-                    runningCount++
-
-                    const promise = index === 0 ? firstPromise : mapper(allValues[index])
-                    pendingPromises[index] = promise
-
-                    promise.then(resolved => {
-                        resolvedValues[index] = resolved
-                        resolvedIndexes.add(index)
-                        runningCount--
-                        startNext()
-                    }).catch(error => {
-                        resolvedErrors[index] = error
-                        resolvedIndexes.add(index)
-                        runningCount--
-                        startNext()
-                    })
+            p.then(resolved => {
+                resolvedValues[index] = resolved
+                resolvedIndexes.add(index)
+                if (concurrency !== undefined) {
+                    runningCount--
                 }
-            }
-
-            startNext()
-        }
-
-        // Yield results in order
-        while (yieldedUpTo < pendingPromises.length) {
-            if (resolvedIndexes.has(yieldedUpTo)) {
-                if (resolvedErrors[yieldedUpTo] !== undefined) {
-                    throw resolvedErrors[yieldedUpTo]
+            }).catch(error => {
+                resolvedErrors[index] = error
+                resolvedIndexes.add(index)
+                if (concurrency !== undefined) {
+                    runningCount--
                 }
-                if (resolvedValues[yieldedUpTo] !== undefined) {
-                    yield resolvedValues[yieldedUpTo]
-                }
-                yieldedUpTo++
-            } else {
-                yield await pendingPromises[yieldedUpTo]
-                yieldedUpTo++
+            })
+
+            if (concurrency !== undefined) {
+                runningCount++
             }
         }
+
+        // Start first promise
+        startPromise(firstValue, nextIndex++, firstPromise)
+
+        // Process iterator in background
+        const processIterator = async () => {
+            let next = await iterator.next()
+            while (!next.done) {
+                // Wait if concurrency limit reached
+                if (concurrency !== undefined) {
+                    while (runningCount >= concurrency) {
+                        await new Promise(resolve => setTimeout(resolve, 0))
+                    }
+                }
+
+                startPromise(next.value, nextIndex++)
+                next = await iterator.next()
+            }
+            sourceComplete = true
+        }
+
+        // Start processing iterator in background
+        const iteratorPromise = processIterator()
+
+        // Yield results in order as they become available
+        while (true) {
+            // Wait for next result to be available
+            while (!resolvedIndexes.has(yieldedUpTo)) {
+                // Check if we're done
+                if (sourceComplete && yieldedUpTo >= pendingPromises.length) {
+                    return
+                }
+                await new Promise(resolve => setTimeout(resolve, 0))
+            }
+
+            // Check if we're done
+            if (sourceComplete && yieldedUpTo >= pendingPromises.length) {
+                break
+            }
+
+            // Yield the next result
+            if (resolvedErrors[yieldedUpTo] !== undefined) {
+                throw resolvedErrors[yieldedUpTo]
+            }
+            if (resolvedValues[yieldedUpTo] !== undefined) {
+                yield resolvedValues[yieldedUpTo]
+            }
+            yieldedUpTo++
+        }
+
+        // Wait for iterator to complete
+        await iteratorPromise
     })()
 }
 
