@@ -1,5 +1,7 @@
 import { Flux } from './Flux'
 import { expect } from 'chai'
+import { Instant } from "globol"
+import { sleep } from './util/sleep'
 
 describe('Flux.flatMap', () => {
     describe('with Array mapper', () => {
@@ -367,6 +369,85 @@ describe('Flux.flatMap', () => {
                     expect(runningCount).to.be.at.most(2)
                 }
             }
+        })
+
+        it('should handle nested flatMaps with async streaming flux and run all inner callbacks immediately', async () => {
+            type Event = { fluxId: string, id: string, emitted: Instant }
+            const executionLog: string[] = []
+
+            const asynchronousFlux = (fluxId: string) => Flux.create<Event>(async (push, complete) => {
+                if (fluxId === 'main') {
+                    // Main flux emits 2 events asynchronously
+                    executionLog.push('main-emit-event1')
+                    push({ fluxId: 'main', id: 'event1', emitted: Instant.now() })
+
+                    await sleep()
+
+                    executionLog.push('main-emit-event2')
+                    push({ fluxId: 'main', id: 'event2', emitted: Instant.now() })
+
+                    complete()
+                } else {
+                    // Inner flux emits 2 events for each outer event
+                    const parentId = fluxId.replace('flux-of-', '')
+                    executionLog.push(`${fluxId}-emit-A`)
+                    push({ fluxId, id: `${parentId}-A`, emitted: Instant.now() })
+
+                    await sleep(30)
+
+                    executionLog.push(`${fluxId}-emit-B`)
+                    push({ fluxId, id: `${parentId}-B`, emitted: Instant.now() })
+
+                    complete()
+                }
+            })
+
+            await asynchronousFlux('main')
+                .flatMap(async event => {
+                    executionLog.push(`outer-flatmap-start-${event.id}`)
+
+                    await asynchronousFlux(`flux-of-${event.id}`)
+                        .flatMap(async innerEvent => {
+                            executionLog.push(`inner-flatmap-start-${innerEvent.id}`)
+
+                            // Different delays to verify parallel execution
+                            const delay = innerEvent.id === 'event1-A' ? 100 :
+                                        innerEvent.id === 'event1-B' ? 40 :
+                                        innerEvent.id === 'event2-A' ? 60 : 30
+
+                            await sleep(delay)
+
+                            executionLog.push(`inner-flatmap-end-${innerEvent.id}`)
+                        })
+
+                    executionLog.push(`outer-flatmap-end-${event.id}`)
+                })
+
+            // Verify all inner flatMap callbacks were executed
+            expect(executionLog).to.include('inner-flatmap-start-event1-A')
+            expect(executionLog).to.include('inner-flatmap-start-event1-B')
+            expect(executionLog).to.include('inner-flatmap-start-event2-A')
+            expect(executionLog).to.include('inner-flatmap-start-event2-B')
+
+            expect(executionLog).to.include('inner-flatmap-end-event1-A')
+            expect(executionLog).to.include('inner-flatmap-end-event1-B')
+            expect(executionLog).to.include('inner-flatmap-end-event2-A')
+            expect(executionLog).to.include('inner-flatmap-end-event2-B')
+
+            // Verify callbacks ran as soon as they could (in parallel)
+            // event1-B should start before event1-A completes (since they run in parallel)
+            const startIndexEvent1B = executionLog.indexOf('inner-flatmap-start-event1-B')
+            const endIndexEvent1A = executionLog.indexOf('inner-flatmap-end-event1-A')
+            expect(startIndexEvent1B).to.be.lessThan(endIndexEvent1A)
+
+            // event1-B should complete before event1-A (40ms < 100ms)
+            const endIndexEvent1B = executionLog.indexOf('inner-flatmap-end-event1-B')
+            expect(endIndexEvent1B).to.be.lessThan(endIndexEvent1A)
+
+            // Verify outer flatMap callbacks complete after their inner flatMaps
+            const outerEndEvent1 = executionLog.indexOf('outer-flatmap-end-event1')
+            expect(outerEndEvent1).to.be.greaterThan(endIndexEvent1A)
+            expect(outerEndEvent1).to.be.greaterThan(endIndexEvent1B)
         })
     })
 })
