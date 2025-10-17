@@ -226,6 +226,36 @@ export class Flux<T> implements AsyncGenerator<T>, Promise<T[]> {
         )
     }
 
+    /**
+     * Delay each of this Flux elements (Subscriber.onNext signals) by a given duration.
+     * Signals are delayed and continue on the parallel default Scheduler, but empty
+     * sequences or immediate error signals are not delayed.
+     *
+     * @param delayMillis - The duration in milliseconds to delay each element emission
+     * @returns A new Flux with delayed element emissions
+     *
+     * @example
+     * ```typescript
+     * const flux = Flux.fromArray([1, 2, 3])
+     * const delayed = flux.delayElements(1000) // Each element delayed by 1 second
+     * for await (const value of delayed) {
+     *   console.log(value) // Prints 1, 2, 3 with 1 second delay between each
+     * }
+     * ```
+     */
+    delayElements(delayMillis: number): Flux<T> {
+        const thiss = this
+        return Flux.constructFromGeneratorFunction(
+            async function* gen() {
+                for await (const value of thiss) {
+                    await new Promise(resolve => setTimeout(resolve, delayMillis))
+                    yield value
+                }
+            },
+            this
+        )
+    }
+
     flatMap<O>(mapper: (value: T) => O[]): Flux<O>
     flatMap<O>(mapper: (value: T) => Flux<O>, options?: { concurrency?: number }): Flux<O>
     flatMap<O>(mapper: (value: T) => Promise<O>, options?: { concurrency?: number }): Flux<O>
