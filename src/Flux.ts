@@ -597,19 +597,20 @@ function flatMapFluxImpl<T, O>(mapper: (value: T) => Flux<O>, firstValue: T, fir
         if (concurrency === undefined) {
             // No concurrency limit - start all fluxes immediately
             for (let i = 0; i < allValues.length; i++) {
-                const flux = i === 0 ? firstFlux : mapper(allValues[i])
-                pendingFluxes[i] = flux
-                buffers.set(i, [])
+                const index = i  // Capture the index value
+                const flux = index === 0 ? firstFlux : mapper(allValues[index])
+                pendingFluxes[index] = flux
+                buffers.set(index, [])
 
                 ;(async () => {
                     try {
                         for await (const item of flux) {
-                            buffers.get(i)!.push(item)
+                            buffers.get(index)!.push(item)
                         }
                     } catch (error) {
-                        buffers.get(i)!.push({ __error: error } as any)
+                        buffers.get(index)!.push({ __error: error } as any)
                     } finally {
-                        completedIndexes.add(i)
+                        completedIndexes.add(index)
                     }
                 })()
             }
@@ -651,16 +652,21 @@ function flatMapFluxImpl<T, O>(mapper: (value: T) => Flux<O>, firstValue: T, fir
         while (yieldedUpTo < pendingFluxes.length) {
             const buffer = buffers.get(yieldedUpTo)!
 
-            while (buffer.length === 0 && !completedIndexes.has(yieldedUpTo)) {
-                await new Promise(resolve => setTimeout(resolve, 1))
-            }
-
-            while (buffer.length > 0) {
-                const item = buffer.shift()!
-                if (item && typeof item === 'object' && '__error' in item) {
-                    throw item.__error
+            // Keep processing this flux until it's completed AND buffer is empty
+            while (!completedIndexes.has(yieldedUpTo) || buffer.length > 0) {
+                // Wait for buffer to have items or for flux to complete
+                while (buffer.length === 0 && !completedIndexes.has(yieldedUpTo)) {
+                    await new Promise(resolve => setTimeout(resolve, 1))
                 }
-                yield item
+
+                // Yield all items currently in buffer
+                while (buffer.length > 0) {
+                    const item = buffer.shift()!
+                    if (item && typeof item === 'object' && '__error' in item) {
+                        throw item.__error
+                    }
+                    yield item
+                }
             }
 
             yieldedUpTo++

@@ -449,5 +449,50 @@ describe('Flux.flatMap', () => {
             expect(outerEndEvent1).to.be.greaterThan(endIndexEvent1A)
             expect(outerEndEvent1).to.be.greaterThan(endIndexEvent1B)
         })
+
+        it('should emit all 16 values from nested async flux before outer flux completes', async () => {
+            // Create outer flux that emits 1, 2, 3, 4 with delays between emissions
+            const outerFlux = Flux.create<number>(async (push, complete) => {
+                for (let i = 1; i <= 4; i++) {
+                    push(i)
+                    if (i < 4) await sleep(10) // Wait between emissions
+                }
+                complete()
+            })
+
+            // FlatMap to create inner fluxes that also emit 1, 2, 3, 4 with delays
+            // flatMap should automatically wait for all inner fluxes to complete
+            const collectedValues = await outerFlux.flatMap((outerValue) => {
+                return Flux.create<{ outer: number, inner: number }>(async (push, complete) => {
+                    for (let i = 1; i <= 4; i++) {
+                        push({ outer: outerValue, inner: i })
+                        if (i < 4) await sleep(10) // Wait between emissions
+                    }
+                    complete()
+                })
+            })
+
+            // Verify we got all 16 values (4 outer × 4 inner)
+            expect(collectedValues.length).to.equal(16)
+
+            // Verify all combinations exist
+            for (let outer = 1; outer <= 4; outer++) {
+                for (let inner = 1; inner <= 4; inner++) {
+                    const found = collectedValues.find(
+                        v => v.outer === outer && v.inner === inner
+                    )
+                    expect(found).to.exist
+                }
+            }
+
+            // Verify all inner values for each outer value are present
+            for (let outer = 1; outer <= 4; outer++) {
+                const innerValues = collectedValues
+                    .filter(v => v.outer === outer)
+                    .map(v => v.inner)
+                    .sort()
+                expect(innerValues).to.deep.equal([1, 2, 3, 4])
+            }
+        })
     })
 })
